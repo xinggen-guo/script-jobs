@@ -1,0 +1,8 @@
+.env
+sent_jobs.json
+
+__pycache__/
+*.pyc
+venv/
+.env/
+.DS_Store
