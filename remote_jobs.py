@@ -6,6 +6,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from zoneinfo import ZoneInfo
 
+from indeed_imap import fetch_indeed_jobs_from_gmail
+
 import requests
 import feedparser
 from dotenv import load_dotenv
@@ -21,6 +23,7 @@ EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
 EMAIL_USER = os.getenv("EMAIL_USER")
 EMAIL_PASS = os.getenv("EMAIL_PASS")  # Gmail App Password
 EMAIL_TO = os.getenv("EMAIL_TO", EMAIL_USER)
+DEBUG = os.getenv("DEBUG", "0") == "1"
 
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Dubai")
 TZ = ZoneInfo(TIMEZONE)
@@ -79,17 +82,77 @@ def job_key(job: dict) -> str:
 # =====================
 
 def fetch_wwr():
-    feed = feedparser.parse("https://weworkremotely.com/remote-jobs.rss")
+    url = "https://weworkremotely.com/remote-jobs.rss"
+    if DEBUG:
+        print(f"[WWR] Fetching RSS: {url}")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/rss+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=20)
+        if DEBUG:
+            print(f"[WWR] HTTP status={resp.status_code}, bytes={len(resp.content)}")
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[WWR] Request failed: {e}")
+        return []
+
+    feed = feedparser.parse(resp.content)
+
+    if DEBUG:
+        bozo = getattr(feed, "bozo", 0)
+        bozo_exc = getattr(feed, "bozo_exception", None)
+        print(f"[WWR] bozo={bozo}")
+        if bozo and bozo_exc:
+            print(f"[WWR] bozo_exception={bozo_exc}")
+        print(f"[WWR] entries={len(getattr(feed, 'entries', []))}")
+
     jobs = []
-    for e in feed.entries:
-        if is_allowed_job(e.title, "", "Remote", e.summary):
-            jobs.append({
-                "source": "WeWorkRemotely",
-                "title": e.title,
-                "company": "Unknown",
-                "location": "Remote",
-                "url": e.link,
-            })
+    total = 0
+    rejected_china = 0
+    rejected_keyword = 0
+
+    for idx, e in enumerate(getattr(feed, "entries", []), 1):
+        total += 1
+        title = getattr(e, "title", "") or ""
+        summary = getattr(e, "summary", "") or ""
+        link = getattr(e, "link", "") or ""
+
+        blob = f"{title} Remote {summary}".lower()
+
+        if text_contains_any(blob, EXCLUDE_CHINA_KEYWORDS):
+            rejected_china += 1
+            if DEBUG and idx <= 5:
+                print(f"[WWR][REJECT China] {title}")
+            continue
+
+        if not job_matches_keywords(title, summary):
+            rejected_keyword += 1
+            if DEBUG and idx <= 5:
+                print(f"[WWR][REJECT Keyword] {title}")
+            continue
+
+        jobs.append({
+            "source": "WeWorkRemotely",
+            "title": title,
+            "company": "Unknown",
+            "location": "Remote",
+            "url": link,
+        })
+
+        if DEBUG and idx <= 5:
+            print(f"[WWR][ACCEPT] {title}")
+
+    if DEBUG:
+        print(f"[WWR] total={total}, accepted={len(jobs)}, "
+              f"rejected_china={rejected_china}, rejected_keyword={rejected_keyword}")
+
     return jobs
 
 def fetch_remoteok():
@@ -136,7 +199,18 @@ def send_email(subject, text):
 def main():
     sent = load_sent()
 
-    jobs = fetch_wwr() + fetch_remoteok()
+    jobs_wwr = fetch_wwr()
+    jobs_rok = fetch_remoteok()
+    indeed_jobs = []
+    try:
+        indeed_jobs = fetch_indeed_jobs_from_gmail()
+        if DEBUG:
+            print(f"[INDEED] jobs={len(indeed_jobs)} (from Gmail alerts)")
+    except Exception as e:
+        print("[INDEED] error:", e)
+    jobs = fetch_wwr() + fetch_remoteok() + indeed_jobs
+    if DEBUG:
+        print(f"[MAIN] WWR={len(jobs_wwr)} RemoteOK={len(jobs_rok)} Total={len(jobs)}")
 
     unique = {}
     for j in jobs:
@@ -157,12 +231,15 @@ def main():
         lines.append("")
 
     body = "\n".join(lines)
+
     today = datetime.now(TZ).strftime("%Y-%m-%d")
-    send_email(f"[Daily Remote Jobs] {len(new_jobs)} - {today}", body)
+    if DEBUG:
+        print(f"[MAIN] Prepared email for {len(new_jobs)} new jobs (sending disabled).")
+    # send_email(f"[Daily Remote Jobs] {len(new_jobs)} - {today}", body)
 
     for k in unique:
         sent.add(k)
-    save_sent(sent)
+    # save_sent(sent)
 
 if __name__ == "__main__":
     main()
