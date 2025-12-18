@@ -235,11 +235,11 @@ def main():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     if DEBUG:
         print(f"[MAIN] Prepared email for {len(new_jobs)} new jobs (sending disabled).")
-    # send_email(f"[Daily Remote Jobs] {len(new_jobs)} - {today}", body)
+    send_email(f"[Daily Remote Jobs] {len(new_jobs)} - {today}", body)
 
     for k in unique:
         sent.add(k)
-    # save_sent(sent)
+    save_sent(sent)
 
 if __name__ == "__main__":
     main()
