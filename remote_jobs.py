@@ -182,7 +182,7 @@ def fetch_remoteok():
 
 def send_email(subject, text):
     msg = MIMEMultipart()
-    msg["From"] = EMAIL_USER
+    msg["From"] = "Remote Jobs Bot" + EMAIL_USER
     msg["To"] = EMAIL_TO
     msg["Subject"] = subject
     msg.attach(MIMEText(text, "plain", "utf-8"))
